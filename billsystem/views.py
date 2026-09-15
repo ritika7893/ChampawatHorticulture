@@ -6,6 +6,7 @@ from .serializers import BillingReportUpdateSerializer,BillingItemSerializer, Bi
 from django.contrib.auth.hashers import check_password
 import pandas as pd
 import requests
+from rest_framework.generics import ListCreateAPIView, RetrieveUpdateDestroyAPIView
 import os
 import zipfile
 import tempfile
@@ -277,6 +278,8 @@ class BillingItemBulkUpload(APIView):
 
 class UpdateBillingItemQuantity(APIView):
 
+   
+
     def post(self, request):
         serializer = BillingItemMultiUserSerializer(data=request.data)
 
@@ -286,7 +289,6 @@ class UpdateBillingItemQuantity(APIView):
         reports = []
         errors = []
 
-        # Get client IP
         ip_address = request.META.get('HTTP_X_FORWARDED_FOR')
         if ip_address:
             ip_address = ip_address.split(',')[0].strip()
@@ -297,11 +299,14 @@ class UpdateBillingItemQuantity(APIView):
             center_id = center_block["center_id"]
             multiple_bills = center_block["multiple_bills"]
             billing_date = center_block.get("billing_date")
-            bill_report_id= center_block.get("bill_report_id")
+            bill_report_id = center_block.get("bill_report_id")
+            component_pageno = center_block.get("component_pageno")
             center_items = BillingItem.objects.filter(center_id=center_id)
-            if BillingReport.objects.filter(bill_report_id=bill_report_id).exists():
+
+            if BillingReport.objects.filter(
+                bill_report_id=bill_report_id
+            ).exists():
                 errors.append({
-                    
                     "bill_report_id": bill_report_id,
                     "error": "Bill Report ID already exists."
                 })
@@ -316,38 +321,66 @@ class UpdateBillingItemQuantity(APIView):
                     for bill_entry in multiple_bills:
                         bill_id, updated_quantity = bill_entry
 
-                        item = center_items.filter(bill_id=bill_id).first()
+                        item = center_items.filter(
+                            bill_id=bill_id
+                        ).first()
+
                         if not item:
                             continue
 
                         if first_item is None:
                             first_item = item
 
-                        # Attach IP for logging
                         setattr(item, "_ip_address", ip_address)
 
                         item.updated_quantity = updated_quantity
+
+                        # ==========================================
+                        # BILL RATE ACCORDING TO SCHEME
+                        # ==========================================
+
+                        scheme_name = (item.scheme_name or "").strip()
+
+                        selling_rate_schemes = [
+                            "4401 बिक्री हेतु",
+                            "मुख्यमंत्री एकीकृत विकास योजना"
+                        ]
+
+                        if scheme_name in selling_rate_schemes:
+                            bill_rate = item.farmer_selling_rate or 0
+                        else:
+                            bill_rate = item.farmer_subsidy_rate or 0
+
+                        # Save selected billing rate
+                        item.rate = bill_rate
+
                         item.save()
 
                         allocated_qty = item.allocated_quantity or 0
-                        rate = item.rate or 0
                         updated_qty = item.updated_quantity or 0
+                        rate = item.rate or 0
+
+                        # ==========================================
+                        # AMOUNT CALCULATION
+                        # ==========================================
 
                         buy_amount = float(allocated_qty) * float(rate)
                         sold_amount = float(updated_qty) * float(rate)
 
                         component_list.append([
                             str(item.bill_id),
-                           
-                        
+
                             str(item.sub_investment_name),
                             str(item.investment_name),
                             str(item.unit),
+
                             str(allocated_qty),
                             str(rate),
                             str(updated_qty),
+
                             str(buy_amount),
                             str(sold_amount),
+
                             str(item.source_of_receipt),
                             str(item.scheme_name),
                         ])
@@ -364,7 +397,8 @@ class UpdateBillingItemQuantity(APIView):
                         bill_report_id=bill_report_id,
                         center_id=first_item.center_id,
                         center_name=first_item.center_name,
-                        component_data=component_list
+                        component_data=component_list,
+                        component_pageno=component_pageno
                     )
 
                     pdf_url = generate_billing_report_pdf(report)
@@ -372,13 +406,17 @@ class UpdateBillingItemQuantity(APIView):
                     reports.append(normalize_json({
                         "center_id": center_id,
                         "bill_report_id": str(report.bill_report_id),
-                        "billing_date": report.billing_date.isoformat() if report.billing_date else None,
+                        "billing_date": (
+                            report.billing_date.isoformat()
+                            if report.billing_date else None
+                        ),
                         "pdf_file": pdf_url,
                         "ip_address": ip_address
                     }))
 
             except Exception as e:
                 import traceback
+
                 errors.append({
                     "center_id": center_id,
                     "error": str(e),
@@ -387,14 +425,21 @@ class UpdateBillingItemQuantity(APIView):
 
         if errors:
             return Response(
-                {"reports": reports, "errors": errors},
+                {
+                    "reports": reports,
+                    "errors": errors
+                },
                 status=400
             )
 
         return Response(
-            {"report_created": True, "reports": reports},
+            {
+                "report_created": True,
+                "reports": reports
+            },
             status=200
         )
+
 
     def put(self, request):
         bill_report_id = request.data.get("bill_report_id")
@@ -1411,6 +1456,7 @@ class NurseryPhysicalRecipientAPIView(APIView):
             {"message": "Recipient deleted successfully"},
             status=status.HTTP_200_OK
         )
+
 class UpdateBillingReportAPIView(APIView):
 
     def put(self, request):
@@ -1426,7 +1472,7 @@ class UpdateBillingReportAPIView(APIView):
         billing_date = data.get("billing_date")
         status_value = data.get("status")
         multiple_bills = data.get("multiple_bills", [])
-
+        component_pageno = data.get("component_pageno")
         try:
             report = BillingReport.objects.get(
                 bill_report_id=old_bill_report_id
@@ -1437,7 +1483,6 @@ class UpdateBillingReportAPIView(APIView):
                 status=404
             )
 
-        # Check duplicate report id
         if (
             new_bill_report_id
             and new_bill_report_id != old_bill_report_id
@@ -1460,6 +1505,9 @@ class UpdateBillingReportAPIView(APIView):
 
             if status_value:
                 report.status = status_value
+                
+            if component_pageno is not None:
+                report.component_pageno = component_pageno
 
             component_list = []
 
@@ -1479,10 +1527,39 @@ class UpdateBillingReportAPIView(APIView):
                 updated_qty = bill["updated_quantity"]
 
                 item.updated_quantity = updated_qty
-                item.save(update_fields=["updated_quantity"])
 
-                allocated_qty = float(item.allocated_quantity or 0)
-                rate = float(item.rate or 0)
+                # ==========================================
+                # BILL RATE ACCORDING TO SCHEME
+                # ==========================================
+
+                scheme_name = (item.scheme_name or "").strip()
+
+                selling_rate_schemes = [
+                    "4401 बिक्री हेतु",
+                    "मुख्यमंत्री एकीकृत विकास योजना"
+                ]
+
+                if scheme_name in selling_rate_schemes:
+                    bill_rate = item.farmer_selling_rate or 0
+                else:
+                    bill_rate = item.farmer_subsidy_rate or 0
+
+                item.rate = bill_rate
+
+                item.save(
+                    update_fields=[
+                        "updated_quantity",
+                        "rate"
+                    ]
+                )
+
+                allocated_qty = float(
+                    item.allocated_quantity or 0
+                )
+
+                rate = float(
+                    item.rate or 0
+                )
 
                 buy_amount = allocated_qty * rate
                 sold_amount = float(updated_qty) * rate
@@ -1503,7 +1580,7 @@ class UpdateBillingReportAPIView(APIView):
 
             if component_list:
                 report.component_data = component_list
-
+            
             report.save()
 
             pdf_url = generate_billing_report_pdf(report)
@@ -1519,6 +1596,8 @@ class UpdateBillingReportAPIView(APIView):
             },
             status=200,
         )
+
+
         
 class DownloadMultipleReceiptsAPIView(APIView):
 
@@ -1564,3 +1643,2184 @@ class DownloadMultipleReceiptsAPIView(APIView):
         response["Content-Disposition"] = 'attachment; filename="billing_receipts.zip"'
 
         return response
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+###########3OTHER PART#####################
+
+
+from rest_framework import status, viewsets
+from rest_framework.response import Response
+
+from .models import (
+    UdyanCropStandard,
+    UdyanBill,
+)
+
+from .serializers import (
+    UdyanCropStandardSerializer,
+    UdyanBillSerializer,
+)
+
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status
+
+from .models import UdyanCropStandard, UdyanBill
+from .serializers import (
+    UdyanCropStandardSerializer,
+    UdyanBillSerializer
+)
+
+
+# =========================================================
+# UDYAN CROP STANDARD - LIST & CREATE
+# =========================================================
+
+class UdyanCropStandardAPIView(APIView):
+
+    def get(self, request):
+
+        queryset = UdyanCropStandard.objects.all()
+
+        financial_year = request.query_params.get(
+            "financial_year"
+        )
+
+        if financial_year:
+            queryset = queryset.filter(
+                financial_year=financial_year
+            )
+
+        queryset = queryset.order_by("crop_name")
+
+        serializer = UdyanCropStandardSerializer(
+            queryset,
+            many=True
+        )
+
+        return Response(
+            serializer.data,
+            status=status.HTTP_200_OK
+        )
+
+    def post(self, request):
+
+        serializer = UdyanCropStandardSerializer(
+            data=request.data
+        )
+
+        serializer.is_valid(
+            raise_exception=True
+        )
+
+        crop = serializer.save()
+
+        return Response(
+            UdyanCropStandardSerializer(crop).data,
+            status=status.HTTP_201_CREATED
+        )
+
+
+# =========================================================
+# UDYAN CROP STANDARD - DETAIL / UPDATE / DELETE
+# =========================================================
+
+class UdyanCropStandardDetailAPIView(APIView):
+
+    def get_object(self, pk):
+
+        try:
+            return UdyanCropStandard.objects.get(
+                pk=pk,
+                is_active=True
+            )
+
+        except UdyanCropStandard.DoesNotExist:
+            return None
+
+    def get(self, request):
+
+        queryset = UdyanCropStandard.objects.all()
+
+        financial_year = request.query_params.get(
+            "financial_year"
+        )
+
+        if financial_year:
+            queryset = queryset.filter(
+                financial_year=financial_year
+            )
+
+        queryset = queryset.order_by("crop_name")
+
+        serializer = UdyanCropStandardSerializer(
+            queryset,
+            many=True
+        )
+
+        return Response(
+            serializer.data,
+            status=status.HTTP_200_OK
+        )
+
+    def put(self, request, pk):
+
+        crop = self.get_object(pk)
+
+        if not crop:
+            return Response(
+                {
+                    "success": False,
+                    "message": "Crop standard not found"
+                },
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        serializer = UdyanCropStandardSerializer(
+            crop,
+            data=request.data
+        )
+
+        serializer.is_valid(
+            raise_exception=True
+        )
+
+        crop = serializer.save()
+
+        return Response(
+            UdyanCropStandardSerializer(crop).data,
+            status=status.HTTP_200_OK
+        )
+
+    def patch(self, request, pk):
+
+        crop = self.get_object(pk)
+
+        if not crop:
+            return Response(
+                {
+                    "success": False,
+                    "message": "Crop standard not found"
+                },
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        serializer = UdyanCropStandardSerializer(
+            crop,
+            data=request.data,
+            partial=True
+        )
+
+        serializer.is_valid(
+            raise_exception=True
+        )
+
+        crop = serializer.save()
+
+        return Response(
+            UdyanCropStandardSerializer(crop).data,
+            status=status.HTTP_200_OK
+        )
+
+    def delete(self, request, pk):
+
+        crop = self.get_object(pk)
+
+        if not crop:
+            return Response(
+                {
+                    "success": False,
+                    "message": "Crop standard not found"
+                },
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        crop.delete()
+
+        return Response(
+            {
+                "success": True,
+                "message": "Crop standard deleted successfully"
+            },
+            status=status.HTTP_204_NO_CONTENT
+        )
+
+
+# =========================================================
+# UDYAN BILL - LIST & CREATE
+# =========================================================
+
+class UdyanBillAPIView(APIView):
+
+    def get(self, request):
+        center = request.query_params.get("center")
+
+        bills = UdyanBill.objects.select_related(
+            "crop"
+        ).prefetch_related(
+            "items"
+        ).all()
+
+        # Filter by center only if provided
+        if center:
+            bills = bills.filter(center=center)
+
+        serializer = UdyanBillSerializer(
+            bills,
+            many=True
+        )
+
+        return Response(
+            serializer.data,
+            status=status.HTTP_200_OK
+        )
+
+    def post(self, request):
+
+        serializer = UdyanBillSerializer(
+            data=request.data
+        )
+
+        serializer.is_valid(
+            raise_exception=True
+        )
+
+        bill = serializer.save()
+
+        return Response(
+            UdyanBillSerializer(bill).data,
+            status=status.HTTP_201_CREATED
+        )
+
+
+# =========================================================
+# UDYAN BILL - DETAIL / UPDATE / DELETE
+# =========================================================
+
+class UdyanBillDetailAPIView(APIView):
+
+    def get_object(self, pk):
+
+        try:
+            return UdyanBill.objects.select_related(
+                "crop"
+            ).prefetch_related(
+                "items"
+            ).get(pk=pk)
+
+        except UdyanBill.DoesNotExist:
+            return None
+
+    def get(self, request, pk):
+
+        bill = self.get_object(pk)
+
+        if not bill:
+            return Response(
+                {
+                    "success": False,
+                    "message": "Bill not found"
+                },
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        serializer = UdyanBillSerializer(bill)
+
+        return Response(
+            serializer.data,
+            status=status.HTTP_200_OK
+        )
+
+    def put(self, request, pk):
+
+        bill = self.get_object(pk)
+
+        if not bill:
+            return Response(
+                {
+                    "success": False,
+                    "message": "Bill not found"
+                },
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        serializer = UdyanBillSerializer(
+            bill,
+            data=request.data
+        )
+
+        serializer.is_valid(
+            raise_exception=True
+        )
+
+        bill = serializer.save()
+
+        return Response(
+            UdyanBillSerializer(bill).data,
+            status=status.HTTP_200_OK
+        )
+
+    def patch(self, request, pk):
+
+        bill = self.get_object(pk)
+
+        if not bill:
+            return Response(
+                {
+                    "success": False,
+                    "message": "Bill not found"
+                },
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        serializer = UdyanBillSerializer(
+            bill,
+            data=request.data,
+            partial=True
+        )
+
+        serializer.is_valid(
+            raise_exception=True
+        )
+
+        bill = serializer.save()
+
+        return Response(
+            UdyanBillSerializer(bill).data,
+            status=status.HTTP_200_OK
+        )
+
+    def delete(self, request, pk):
+
+        bill = self.get_object(pk)
+
+        if not bill:
+            return Response(
+                {
+                    "success": False,
+                    "message": "Bill not found"
+                },
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        bill.delete()
+
+        return Response(
+            {
+                "success": True,
+                "message": "Bill deleted successfully"
+            },
+            status=status.HTTP_204_NO_CONTENT
+        )
+        
+        
+        
+        
+        
+        
+
+from decimal import Decimal
+
+from django.db.models import Sum
+
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from rest_framework.views import APIView
+from rest_framework.generics import (
+    ListAPIView,
+    RetrieveUpdateAPIView,
+    ListCreateAPIView,
+    DestroyAPIView,
+)
+
+from .models import (
+    BeejMasterSetting,
+    BeejCentre,
+    BeejVariety,
+    BeejStandard,
+    BeejPurchase,
+    BeejAllocation,
+    BeejFarmerDistribution,
+)
+
+from .serializers import (
+    MasterSettingSerializer,
+    CentreSerializer,
+    VarietySerializer,
+    StandardSerializer,
+    PurchaseSerializer,
+    AllocationSerializer,
+    DistributionSerializer,
+)
+
+
+DEFAULT_CENTRES = list(
+    VikasKhandVidhanSabha.objects
+    .values_list("center_name", flat=True)
+    .distinct()
+)
+
+
+DEFAULT_VARIETIES = [
+    (
+        "ब्रोकली Rock 001",
+        "सा0जाति",
+        95600,
+    ),
+    (
+        "बैंगन BSHB-33 (Navin)",
+        "अनु0जाति",
+        14400,
+    ),
+    (
+        "टमाटर BSHT-10 (Amol)",
+        "सा0जाति",
+        87450,
+    ),
+    (
+        "टमाटर Sindhu",
+        "सा0जाति",
+        98000,
+    ),
+    (
+        "शिमला मिर्च BSCH-888 (Indu)",
+        "सा0जाति",
+        99000,
+    ),
+    (
+        "शिमला मिर्च Alaska",
+        "सा0जाति",
+        125000,
+    ),
+    (
+        "बंदगोभी BSCB-01 (Coral)",
+        "सा0जाति",
+        58400,
+    ),
+    (
+        "बंदगोभी Bajwa60",
+        "सा0जाति",
+        47900,
+    ),
+    (
+        "फूलगोभी BSCF-11 (Mansi)",
+        "अनु0जाति",
+        59500,
+    ),
+    (
+        "फूलगोभी AZCL-900",
+        "सा0जाति",
+        57200,
+    ),
+]
+
+
+DEFAULT_PURCHASES = [
+    (
+        "टमाटर BSHT-10 (Amol)",
+        "2026-05-15",
+        "Anishree Traders",
+        87450,
+        2.80,
+        "देयक सं0 90",
+    ),
+    (
+        "टमाटर Sindhu",
+        "2026-05-15",
+        "Devbhoomi Farming Solutions",
+        98000,
+        2.55,
+        "देयक सं0 86",
+    ),
+    (
+        "ब्रोकली Rock 001",
+        "2026-05-15",
+        "Devbhoomi Farming Solutions",
+        95600,
+        1.00,
+        "देयक सं0 113",
+    ),
+    (
+        "बैंगन BSHB-33 (Navin)",
+        "2026-05-15",
+        "Devbhoomi Farming Solutions",
+        14400,
+        10.70,
+        "देयक सं0 113",
+    ),
+    (
+        "शिमला मिर्च BSCH-888 (Indu)",
+        "2026-05-15",
+        "NIRVANA IRRIGATION",
+        99000,
+        2.52,
+        "देयक सं0 65",
+    ),
+    (
+        "शिमला मिर्च Alaska",
+        "2026-05-15",
+        "Anishree Traders",
+        125000,
+        2.00,
+        "देयक सं0 81",
+    ),
+    (
+        "फूलगोभी AZCL-900",
+        "2026-05-22",
+        "NIRVANA IRRIGATION",
+        57200,
+        4.37,
+        "देयक सं0 116",
+    ),
+    (
+        "फूलगोभी BSCF-11 (Mansi)",
+        "2026-05-22",
+        "Devbhoomi Farming Solutions",
+        59500,
+        4.20,
+        "देयक सं0 182",
+    ),
+    (
+        "बंदगोभी Bajwa60",
+        "2026-05-22",
+        "Anishree Traders",
+        47900,
+        5.21,
+        "देयक सं0 138",
+    ),
+    (
+        "बंदगोभी BSCB-01 (Coral)",
+        "2026-05-22",
+        "NIRVANA IRRIGATION",
+        58400,
+        4.28,
+        "देयक सं0 177",
+    ),
+]
+
+
+ALLOT = {
+    "ब्रोकली Rock 001": [
+        40, 40, 40, 40, 40, 40,
+        40, 40, 40, 40, 40, 40,
+        40, 40, 40, 40, 40, 40,
+        40, 40, 40, 80, 40, 40,
+    ],
+
+    "बैंगन BSHB-33 (Navin)": [
+        500, 500, 500, 500, 500, 500,
+        500, 500, 500, 200, 200, 200,
+        500, 500, 500, 500, 200, 400,
+        500, 500, 500, 500, 500, 500,
+    ],
+
+    "टमाटर BSHT-10 (Amol)": [
+        240, 240, 240, 240, 240, 240,
+        240, 240, 240, 200, 200, 240,
+        0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0,
+    ],
+
+    "टमाटर Sindhu": [
+        0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0,
+        200, 200, 200, 200, 200, 200,
+        200, 200, 200, 350, 200, 200,
+    ],
+
+    "शिमला मिर्च BSCH-888 (Indu)": [
+        320, 200, 200, 200, 200, 200,
+        200, 200, 200, 200, 200, 200,
+        0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0,
+    ],
+
+    "शिमला मिर्च Alaska": [
+        0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0,
+        160, 160, 160, 160, 160, 160,
+        160, 160, 160, 240, 160, 160,
+    ],
+
+    "बंदगोभी BSCB-01 (Coral)": [
+        350, 350, 430, 350, 350, 350,
+        350, 350, 350, 350, 350, 350,
+        0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0,
+    ],
+
+    "बंदगोभी Bajwa60": [
+        0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0,
+        420, 420, 420, 420, 420, 420,
+        420, 420, 420, 420, 590, 420,
+    ],
+
+    "फूलगोभी BSCF-11 (Mansi)": [
+        440, 460, 330, 330, 330, 330,
+        330, 330, 330, 330, 330, 330,
+        0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0,
+    ],
+
+    "फूलगोभी AZCL-900": [
+        0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0,
+        330, 330, 330, 330, 330, 330,
+        330, 330, 330, 630, 440, 330,
+    ],
+}
+
+
+def ensure_defaults():
+
+    # Existing database should NEVER be reseeded.
+    if BeejCentre.objects.exists():
+        return
+
+    master, _ = (
+        BeejMasterSetting.objects.get_or_create(
+            financial_year="2026-27",
+            defaults={
+                "purchase_limit": 250000,
+                "project_cost": 60000,
+                "max_subsidy": 30000,
+                "farmer_share": 30000,
+            },
+        )
+    )
+
+    for name in DEFAULT_CENTRES:
+        BeejCentre.objects.create(
+            name=name
+        )
+
+    varieties = {}
+
+    for (
+        name,
+        jati,
+        rate,
+    ) in DEFAULT_VARIETIES:
+
+        varieties[name] = (
+            BeejVariety.objects.create(
+                name=name,
+                jati=jati,
+                default_rate=rate,
+            )
+        )
+
+    for (
+        name,
+        jati,
+        rate,
+    ) in DEFAULT_VARIETIES:
+
+        variety = varieties[name]
+
+        BeejStandard.objects.create(
+            variety=variety,
+
+            item1_qty=1,
+            item1_rate=8700,
+
+            item2_qty=Decimal("30000") / Decimal(
+                str(rate)
+            ),
+
+            item2_rate=rate,
+
+            item3_qty=100,
+            item3_rate=150,
+
+            item4_qty=20,
+            item4_rate=315,
+        )
+
+    for (
+        variety_name,
+        date,
+        supplier,
+        rate,
+        qty,
+        ref,
+    ) in DEFAULT_PURCHASES:
+
+        BeejPurchase.objects.create(
+            date=date,
+
+            variety=varieties[
+                variety_name
+            ],
+
+            supplier=supplier,
+
+            qty_kg=qty,
+
+            rate=rate,
+
+            ref=ref,
+        )
+
+    centres = list(
+        BeejCentre.objects
+        .order_by("id")
+    )
+
+    for (
+        variety_name,
+        quantities,
+    ) in ALLOT.items():
+
+        variety = varieties[
+            variety_name
+        ]
+
+        standard = variety.standard
+
+        for index, qty in enumerate(
+            quantities
+        ):
+
+            if qty <= 0:
+                continue
+
+            area = (
+                Decimal(
+                    str(qty)
+                )
+                / standard.seed_gm_per_hectare
+            )
+
+            BeejAllocation.objects.create(
+                date="2026-06-01",
+
+                centre=centres[index],
+
+                variety=variety,
+
+                qty_gm=qty,
+
+                area=area,
+
+                project_cost=area * master.project_cost,
+
+                subsidy=area * master.max_subsidy,
+
+                farmer_share=area * master.farmer_share,
+
+                source="आवंटन पत्र जिला यो0-सब्जी/2026-27",
+            )
+
+
+from rest_framework.views import APIView
+from rest_framework.generics import (
+    ListAPIView,
+    RetrieveUpdateAPIView,
+    ListCreateAPIView,
+    DestroyAPIView,
+)
+from rest_framework.response import Response
+
+
+class BootstrapAPIView(APIView):
+
+    def get(self, request):
+        ensure_defaults()
+
+        master = BeejMasterSetting.objects.get(
+            financial_year="2026-27"
+        )
+
+        return Response({
+            "master": MasterSettingSerializer(
+                master
+            ).data,
+
+            "centres": CentreSerializer(
+                BeejCentre.objects.filter(
+                    is_active=True
+                ),
+                many=True
+            ).data,
+
+            "varieties": VarietySerializer(
+                BeejVariety.objects.filter(
+                    is_active=True
+                ),
+                many=True
+            ).data,
+
+            "standards": StandardSerializer(
+                BeejStandard.objects
+                .select_related("variety")
+                .all(),
+                many=True
+            ).data,
+
+            "purchases": PurchaseSerializer(
+                BeejPurchase.objects
+                .select_related("variety")
+                .all(),
+                many=True
+            ).data,
+
+            "allocations": AllocationSerializer(
+                BeejAllocation.objects
+                .select_related(
+                    "centre",
+                    "variety"
+                )
+                .all(),
+                many=True
+            ).data,
+
+            "entries": DistributionSerializer(
+                BeejFarmerDistribution.objects
+                .select_related(
+                    "centre",
+                    "variety"
+                )
+                .all(),
+                many=True
+            ).data,
+        })
+
+
+class MasterSettingAPIView(APIView):
+
+    def get(self, request):
+        ensure_defaults()
+
+        master = BeejMasterSetting.objects.get(
+            financial_year="2026-27"
+        )
+
+        return Response(
+            MasterSettingSerializer(master).data
+        )
+
+    def put(self, request):
+        ensure_defaults()
+
+        master = BeejMasterSetting.objects.get(
+            financial_year="2026-27"
+        )
+
+        serializer = MasterSettingSerializer(
+            master,
+            data=request.data,
+            partial=True
+        )
+
+        serializer.is_valid(
+            raise_exception=True
+        )
+
+        serializer.save(
+            financial_year="2026-27"
+        )
+
+        return Response(serializer.data)
+
+
+class CentreListAPIView(ListAPIView):
+
+    serializer_class = CentreSerializer
+
+    queryset = BeejCentre.objects.filter(
+        is_active=True
+    )
+
+
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status
+from django.shortcuts import get_object_or_404
+
+from .models import BeejVariety
+from .serializers import VarietySerializer
+
+
+class VarietyListAPIView(APIView):
+
+    def get(self, request):
+        varieties = BeejVariety.objects.filter(
+            is_active=True
+        )
+
+        serializer = VarietySerializer(
+            varieties,
+            many=True
+        )
+
+        return Response(
+            serializer.data,
+            status=status.HTTP_200_OK
+        )
+
+    def post(self, request):
+        serializer = VarietySerializer(
+            data=request.data
+        )
+
+        if serializer.is_valid():
+            serializer.save()
+
+            return Response(
+                serializer.data,
+                status=status.HTTP_201_CREATED
+            )
+
+        return Response(
+            serializer.errors,
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+
+class VarietyDetailAPIView(APIView):
+
+    def get_object(self, pk):
+        return get_object_or_404(
+            BeejVariety,
+            pk=pk,
+            is_active=True
+        )
+
+    def put(self, request, pk):
+        variety = self.get_object(pk)
+
+        serializer = VarietySerializer(
+            variety,
+            data=request.data
+        )
+
+        if serializer.is_valid():
+            serializer.save()
+
+            return Response(
+                serializer.data,
+                status=status.HTTP_200_OK
+            )
+
+        return Response(
+            serializer.errors,
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    def delete(self, request, pk):
+        variety = self.get_object(pk)
+
+        variety.is_active = False
+        variety.save(update_fields=["is_active"])
+
+        return Response(
+            {
+                "status": True,
+                "message": "Variety deleted successfully"
+            },
+            status=status.HTTP_200_OK
+        )
+
+class StandardListAPIView(APIView):
+
+    def get(self, request):
+        standards = BeejStandard.objects.select_related("variety").all()
+        serializer = StandardSerializer(standards, many=True)
+        return Response(serializer.data)
+
+    def post(self, request):
+        serializer = StandardSerializer(data=request.data)
+
+        if serializer.is_valid():
+            serializer.save()
+            return Response(
+                serializer.data,
+                status=status.HTTP_201_CREATED
+            )
+
+        return Response(
+            serializer.errors,
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+
+class StandardDetailAPIView(APIView):
+
+    def get_object(self, pk):
+        return get_object_or_404(
+            BeejStandard.objects.select_related("variety"),
+            pk=pk
+        )
+
+    def get(self, request, pk):
+        standard = self.get_object(pk)
+        serializer = StandardSerializer(standard)
+        return Response(serializer.data)
+
+    def put(self, request, pk):
+        standard = self.get_object(pk)
+        serializer = StandardSerializer(
+            standard,
+            data=request.data
+        )
+    
+        if serializer.is_valid():
+            serializer.save()
+            return Response({
+                "status": True,
+                "message": "Standard updated successfully",
+                "data": serializer.data
+            })
+    
+        return Response(
+            serializer.errors,
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    
+    def delete(self, request, pk):
+        standard = self.get_object(pk)
+        standard.delete()
+    
+        return Response(
+            {
+                "status": True,
+                "message": "Standard deleted successfully"
+            },
+            status=status.HTTP_200_OK
+        )
+
+class PurchaseListCreateAPIView(ListCreateAPIView):
+
+    serializer_class = PurchaseSerializer
+
+    queryset = (
+        BeejPurchase.objects
+        .select_related("variety")
+        .all()
+    )
+
+
+class PurchaseDetailAPIView(DestroyAPIView):
+
+    serializer_class = PurchaseSerializer
+
+    queryset = BeejPurchase.objects.all()
+
+
+class AllocationListCreateAPIView(ListCreateAPIView):
+
+    serializer_class = AllocationSerializer
+
+    queryset = (
+        BeejAllocation.objects
+        .select_related(
+            "centre",
+            "variety"
+        )
+        .all()
+    )
+
+
+class AllocationDetailAPIView(DestroyAPIView):
+
+    serializer_class = AllocationSerializer
+
+    queryset = BeejAllocation.objects.all()
+
+
+class DistributionListCreateAPIView(ListCreateAPIView):
+
+    serializer_class = DistributionSerializer
+
+    queryset = (
+        BeejFarmerDistribution.objects
+        .select_related(
+            "centre",
+            "variety"
+        )
+        .all()
+    )
+
+
+class DistributionDetailAPIView(DestroyAPIView):
+
+    serializer_class = DistributionSerializer
+
+    queryset = BeejFarmerDistribution.objects.all()
+    
+    
+    
+    
+    
+    
+    
+    
+    
+from rest_framework import status
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from django.shortcuts import get_object_or_404
+
+from .models import LibraryCategory, LibraryDocument
+from .serializers import (
+    LibraryCategorySerializer,
+    LibraryDocumentSerializer
+)
+
+
+# =========================================================
+# CATEGORY LIST + CREATE
+# =========================================================
+
+class LibraryCategoryListCreateView(APIView):
+
+    def get(self, request):
+
+        categories = LibraryCategory.objects.all().order_by("-created_at")
+
+        serializer = LibraryCategorySerializer(
+            categories,
+            many=True
+        )
+
+        return Response(
+            {
+                "status": True,
+                "message": "Categories fetched successfully",
+                "data": serializer.data
+            },
+            status=status.HTTP_200_OK
+        )
+
+    def post(self, request):
+
+        serializer = LibraryCategorySerializer(
+            data=request.data
+        )
+
+        if serializer.is_valid():
+
+            category = serializer.save()
+
+            return Response(
+                {
+                    "status": True,
+                    "message": "Category created successfully",
+                    "data": LibraryCategorySerializer(
+                        category
+                    ).data
+                },
+                status=status.HTTP_201_CREATED
+            )
+
+        return Response(
+            {
+                "status": False,
+                "message": "Validation error",
+                "errors": serializer.errors
+            },
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+
+# =========================================================
+# CATEGORY DETAIL
+# =========================================================
+
+class LibraryCategoryDetailView(APIView):
+
+    def get(self, request, pk):
+
+        category = get_object_or_404(
+            LibraryCategory,
+            id=pk
+          
+        )
+
+        serializer = LibraryCategorySerializer(category)
+
+        return Response(
+            {
+                "status": True,
+                "message": "Category fetched successfully",
+                "data": serializer.data
+            },
+            status=status.HTTP_200_OK
+        )
+
+    def put(self, request, pk):
+
+        category = get_object_or_404(
+            LibraryCategory,
+            id=pk
+        )
+
+        serializer = LibraryCategorySerializer(
+            category,
+            data=request.data,
+            partial=True
+        )
+
+        if serializer.is_valid():
+
+            serializer.save()
+
+            return Response(
+                {
+                    "status": True,
+                    "message": "Category updated successfully",
+                    "data": serializer.data
+                },
+                status=status.HTTP_200_OK
+            )
+
+        return Response(
+            {
+                "status": False,
+                "message": "Validation error",
+                "errors": serializer.errors
+            },
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    def delete(self, request, pk):
+
+        category = get_object_or_404(
+            LibraryCategory,
+            id=pk
+        )
+
+        category.is_active = False
+        category.delete()
+
+        return Response(
+            {
+                "status": True,
+                "message": "Category deleted successfully"
+            },
+            status=status.HTTP_200_OK
+        )
+
+
+# =========================================================
+# DOCUMENT LIST + CREATE
+# =========================================================
+
+class LibraryDocumentListCreateView(APIView):
+
+    def get(self, request):
+
+        category_id = request.query_params.get("category")
+
+        documents = LibraryDocument.objects.all()
+
+        if category_id:
+            documents = documents.filter(
+                category_id=category_id
+            )
+
+        serializer = LibraryDocumentSerializer(
+            documents,
+            many=True
+        )
+
+        return Response(
+            {
+                "status": True,
+                "message": "Documents fetched successfully",
+                "data": serializer.data
+            },
+            status=status.HTTP_200_OK
+        )
+
+    def post(self, request):
+
+        category_id = request.data.get("category")
+
+        if not category_id:
+
+            return Response(
+                {
+                    "status": False,
+                    "message": "Category is required."
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        category = get_object_or_404(
+            LibraryCategory,
+            id=category_id,
+            is_active=True
+        )
+
+        serializer = LibraryDocumentSerializer(
+            data=request.data
+        )
+
+        if serializer.is_valid():
+
+            document = serializer.save(
+                category=category
+            )
+
+            return Response(
+                {
+                    "status": True,
+                    "message": "Document uploaded successfully",
+                    "data": LibraryDocumentSerializer(
+                        document
+                    ).data
+                },
+                status=status.HTTP_201_CREATED
+            )
+
+        return Response(
+            {
+                "status": False,
+                "message": "Validation error",
+                "errors": serializer.errors
+            },
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+
+# =========================================================
+# DOCUMENT DETAIL
+# =========================================================
+
+class LibraryDocumentDetailView(APIView):
+
+    def get(self, request, pk):
+
+        document = get_object_or_404(
+            LibraryDocument,
+            id=pk,
+            is_active=True
+        )
+
+        serializer = LibraryDocumentSerializer(document)
+
+        return Response(
+            {
+                "status": True,
+                "message": "Document fetched successfully",
+                "data": serializer.data
+            },
+            status=status.HTTP_200_OK
+        )
+
+    def put(self, request, pk):
+
+        document = get_object_or_404(
+            LibraryDocument,
+            id=pk
+        )
+
+        serializer = LibraryDocumentSerializer(
+            document,
+            data=request.data,
+            partial=True
+        )
+
+        if serializer.is_valid():
+
+            serializer.save()
+
+            return Response(
+                {
+                    "status": True,
+                    "message": "Document updated successfully",
+                    "data": serializer.data
+                },
+                status=status.HTTP_200_OK
+            )
+
+        return Response(
+            {
+                "status": False,
+                "message": "Validation error",
+                "errors": serializer.errors
+            },
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    def delete(self, request, pk):
+
+        document = get_object_or_404(
+            LibraryDocument,
+            id=pk
+        )
+
+        document.is_active = False
+        
+        document.delete()
+
+        return Response(
+            {
+                "status": True,
+                "message": "Document deleted successfully"
+            },
+            status=status.HTTP_200_OK
+        )
+        
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status
+
+from .models import MonthReport
+from .serializers import MonthReportSerializer
+
+
+class MonthReportListAPIView(APIView):
+
+    def get(self, request):
+        reports = MonthReport.objects.all().order_by("-financial_year", "-month")
+        serializer = MonthReportSerializer(reports, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def post(self, request):
+        serializer = MonthReportSerializer(data=request.data)
+
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class MonthReportDetailAPIView(APIView):
+
+    def get_object(self, pk):
+        try:
+            return MonthReport.objects.get(pk=pk)
+        except MonthReport.DoesNotExist:
+            return None
+
+    def get(self, request, pk):
+        try:
+            report = MonthReport.objects.get(pk=pk)
+        except MonthReport.DoesNotExist:
+            return JsonResponse(
+                {"error": "Month report not found."},
+                status=404
+            )
+
+        if not report.month_report:
+            return JsonResponse(
+                {"error": "Excel file is not available for this report."},
+                status=404
+            )
+
+        file_path = report.month_report.path
+
+        if not os.path.exists(file_path):
+            return JsonResponse(
+                {
+                    "error": "Excel file does not exist on the server.",
+                    "path": file_path
+                },
+                status=404
+            )
+
+        response = FileResponse(
+            open(file_path, "rb"),
+            content_type=(
+                "application/vnd.openxmlformats-officedocument."
+                "spreadsheetml.sheet"
+            )
+        )
+
+        response["Content-Disposition"] = (
+            f'inline; filename="{os.path.basename(file_path)}"'
+        )
+
+        response["Access-Control-Allow-Origin"] = "http://localhost:3000"
+
+        return response
+
+    def put(self, request, pk):
+        report = self.get_object(pk)
+
+        if not report:
+            return Response(
+                {"detail": "Month report not found."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        serializer = MonthReportSerializer(report, data=request.data)
+
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_200_OK)
+
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    def delete(self, request, pk):
+        report = self.get_object(pk)
+
+        if not report:
+            return Response(
+                {"detail": "Month report not found."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        report.delete()
+
+        return Response(
+            {"message": "Month report deleted successfully."},
+            status=status.HTTP_204_NO_CONTENT
+        )
+       
+       
+from django.db import transaction
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status
+from .models import KisanPersonalLandDetails, KisanPlanTechnicalBankDetails, KisanApplicationDocuments
+from .serializers import KisanPersonalLandDetailsSerializer, KisanPlanTechnicalBankDetailsSerializer, KisanApplicationDocumentsSerializer
+
+
+class KisanApplicationAPIView(APIView):
+
+    @transaction.atomic
+    def post(self, request):
+        serializer = KisanPersonalLandDetailsSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response({"success": False, "errors": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+
+        personal = serializer.save()
+        form_id = personal.form_id
+        plan = KisanPlanTechnicalBankDetails.objects.get(form_id=form_id)
+        application = KisanApplicationDocuments.objects.get(form_id=form_id)
+
+        return Response({
+            "success": True,
+            "message": "Kisan application created successfully.",
+            "form_id": form_id,
+            "data": {
+                "personal": KisanPersonalLandDetailsSerializer(personal).data,
+                "plan_technical_bank": KisanPlanTechnicalBankDetailsSerializer(plan).data,
+                "application_documents": KisanApplicationDocumentsSerializer(application).data
+            }
+        }, status=status.HTTP_201_CREATED)
+
+    def get(self, request):
+        form_id = request.query_params.get("form_id")
+
+        if form_id:
+            try:
+                personal = KisanPersonalLandDetails.objects.get(form_id=form_id)
+                plan = KisanPlanTechnicalBankDetails.objects.get(form_id=form_id)
+                application = KisanApplicationDocuments.objects.get(form_id=form_id)
+            except (KisanPersonalLandDetails.DoesNotExist, KisanPlanTechnicalBankDetails.DoesNotExist, KisanApplicationDocuments.DoesNotExist):
+                return Response({"success": False, "message": "Application not found."}, status=status.HTTP_404_NOT_FOUND)
+
+            return Response({
+                "success": True,
+                "form_id": form_id,
+                "data": {
+                    "personal": KisanPersonalLandDetailsSerializer(personal).data,
+                    "plan_technical_bank": KisanPlanTechnicalBankDetailsSerializer(plan).data,
+                    "application_documents": KisanApplicationDocumentsSerializer(application).data
+                }
+            }, status=status.HTTP_200_OK)
+
+        personal_records = KisanPersonalLandDetails.objects.all().order_by("-id")
+        result = []
+
+        for personal in personal_records:
+            form_id = personal.form_id
+            plan = KisanPlanTechnicalBankDetails.objects.filter(form_id=form_id).first()
+            application = KisanApplicationDocuments.objects.filter(form_id=form_id).first()
+
+            result.append({
+                "form_id": form_id,
+                "personal": KisanPersonalLandDetailsSerializer(personal).data,
+                "plan_technical_bank": KisanPlanTechnicalBankDetailsSerializer(plan).data if plan else None,
+                "application_documents": KisanApplicationDocumentsSerializer(application).data if application else None
+            })
+
+        return Response({"success": True, "count": len(result), "data": result}, status=status.HTTP_200_OK)
+
+
+class KisanPersonalLandDetailsUpdateAPIView(APIView):
+
+    @transaction.atomic
+    def put(self, request):
+        form_id = request.data.get("form_id")
+
+        if not form_id:
+            return Response({"success": False, "message": "form_id is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            instance = KisanPersonalLandDetails.objects.get(form_id=form_id)
+        except KisanPersonalLandDetails.DoesNotExist:
+            return Response({"success": False, "message": "Personal land details not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = KisanPersonalLandDetailsSerializer(instance, data=request.data, partial=True)
+
+        if not serializer.is_valid():
+            return Response({"success": False, "errors": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+
+        serializer.save()
+        return Response({"success": True, "message": "Personal and land details updated successfully.", "data": serializer.data}, status=status.HTTP_200_OK)
+
+
+class KisanPlanTechnicalBankUpdateAPIView(APIView):
+
+    @transaction.atomic
+    def put(self, request):
+        form_id = request.data.get("form_id")
+
+        if not form_id:
+            return Response({"success": False, "message": "form_id is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            instance = KisanPlanTechnicalBankDetails.objects.get(form_id=form_id)
+        except KisanPlanTechnicalBankDetails.DoesNotExist:
+            return Response({"success": False, "message": "Plan technical bank details not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = KisanPlanTechnicalBankDetailsSerializer(instance, data=request.data, partial=True)
+
+        if not serializer.is_valid():
+            return Response({"success": False, "errors": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+
+        serializer.save()
+        return Response({"success": True, "message": "Plan, technical and bank details updated successfully.", "data": serializer.data}, status=status.HTTP_200_OK)
+
+
+class KisanApplicationDocumentsUpdateAPIView(APIView):
+
+    @transaction.atomic
+    def put(self, request):
+        form_id = request.data.get("form_id")
+
+        if not form_id:
+            return Response({"success": False, "message": "form_id is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            instance = KisanApplicationDocuments.objects.get(form_id=form_id)
+        except KisanApplicationDocuments.DoesNotExist:
+            return Response({"success": False, "message": "Application documents not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = KisanApplicationDocumentsSerializer(instance, data=request.data, partial=True)
+
+        if not serializer.is_valid():
+            return Response({"success": False, "errors": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+
+        serializer.save()
+        return Response({"success": True, "message": "Application and documents updated successfully.", "data": serializer.data}, status=status.HTTP_200_OK) 
+        
+from .models import CenterLink,CenterLinkDetail
+from .serializers import CenterLinkSerializer,CenterLinkDetailSerializer
+        
+class CenterLinkAPIView(APIView):
+
+    # GET ALL
+    def get(self, request):
+        center_name = request.query_params.get("center_name")
+    
+        data = CenterLink.objects.all().order_by("-id")
+    
+        if center_name:
+            data = [
+                obj for obj in data
+                if center_name in (obj.center_names or [])
+            ]
+    
+        serializer = CenterLinkSerializer(data, many=True)
+    
+        return Response({
+            "success": True,
+            "message": "Data fetched successfully",
+            "data": serializer.data
+        }, status=status.HTTP_200_OK)
+
+    # POST
+    def post(self, request):
+        serializer = CenterLinkSerializer(data=request.data)
+
+        if serializer.is_valid():
+            serializer.save()
+
+            return Response({
+                "success": True,
+                "message": "Data created successfully",
+                "data": serializer.data
+            }, status=status.HTTP_201_CREATED)
+
+        return Response({
+            "success": False,
+            "errors": serializer.errors
+        }, status=status.HTTP_400_BAD_REQUEST)
+
+
+class CenterLinkDetailAPIView(APIView):
+
+    # GET SINGLE
+    def get(self, request, pk):
+        try:
+            obj = CenterLink.objects.get(pk=pk)
+        except CenterLink.DoesNotExist:
+            return Response({
+                "success": False,
+                "message": "Data not found"
+            }, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = CenterLinkSerializer(obj)
+
+        return Response({
+            "success": True,
+            "data": serializer.data
+        }, status=status.HTTP_200_OK)
+
+    # PUT
+    def put(self, request, pk):
+        try:
+            obj = CenterLink.objects.get(pk=pk)
+        except CenterLink.DoesNotExist:
+            return Response({
+                "success": False,
+                "message": "Data not found"
+            }, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = CenterLinkSerializer(
+            obj,
+            data=request.data
+        )
+
+        if serializer.is_valid():
+            serializer.save()
+
+            return Response({
+                "success": True,
+                "message": "Data updated successfully",
+                "data": serializer.data
+            }, status=status.HTTP_200_OK)
+
+        return Response({
+            "success": False,
+            "errors": serializer.errors
+        }, status=status.HTTP_400_BAD_REQUEST)
+
+    # DELETE
+    def delete(self, request, pk):
+        try:
+            obj = CenterLink.objects.get(pk=pk)
+        except CenterLink.DoesNotExist:
+            return Response({
+                "success": False,
+                "message": "Data not found"
+            }, status=status.HTTP_404_NOT_FOUND)
+
+        obj.delete()
+
+        return Response({
+            "success": True,
+            "message": "Data deleted successfully"
+        }, status=status.HTTP_200_OK)
+
+
+class CenterLinkDetailCenterAPIView(APIView):
+
+    # GET SINGLE
+    def get(self, request):
+        center_name = request.query_params.get("center_name")
+    
+        details = CenterLinkDetail.objects.select_related(
+            "center_link"
+        ).order_by("-id")
+    
+        if center_name:
+            details = details.filter(center_name=center_name)
+    
+        if not details.exists():
+            return Response({
+                "success": False,
+                "message": "Data not found"
+            }, status=status.HTTP_404_NOT_FOUND)
+    
+        detail_serializer = CenterLinkDetailSerializer(
+            details,
+            many=True
+        )
+    
+        # Get unique CenterLinks
+        center_links = CenterLink.objects.filter(
+            details__in=details
+        ).distinct()
+    
+        center_serializer = CenterLinkSerializer(
+            center_links,
+            many=True
+        )
+    
+        return Response({
+            "success": True,
+            "center_link": center_serializer.data,
+            "details": detail_serializer.data
+        }, status=status.HTTP_200_OK)
+    
+        # POST
+    def post(self, request):
+            serializer = CenterLinkDetailSerializer(
+                data=request.data
+            )
+    
+            if serializer.is_valid():
+                serializer.save()
+    
+                return Response({
+                    "success": True,
+                    "message": "Data created successfully",
+                    "data": serializer.data
+                }, status=status.HTTP_201_CREATED)
+    
+            return Response({
+                "success": False,
+                "errors": serializer.errors
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+    # PUT
+    def put(self, request, pk):
+        try:
+            obj = CenterLinkDetail.objects.get(pk=pk)
+        except CenterLinkDetail.DoesNotExist:
+            return Response({
+                "success": False,
+                "message": "Data not found"
+            }, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = CenterLinkDetailSerializer(
+            obj,
+            data=request.data
+        )
+
+        if serializer.is_valid():
+            serializer.save()
+
+            return Response({
+                "success": True,
+                "message": "Data updated successfully",
+                "data": serializer.data
+            }, status=status.HTTP_200_OK)
+
+        return Response({
+            "success": False,
+            "errors": serializer.errors
+        }, status=status.HTTP_400_BAD_REQUEST)
+
+    # DELETE
+    def delete(self, request, pk):
+        try:
+            obj = CenterLinkDetail.objects.get(pk=pk)
+        except CenterLinkDetail.DoesNotExist:
+            return Response({
+                "success": False,
+                "message": "Data not found"
+            }, status=status.HTTP_404_NOT_FOUND)
+
+        obj.delete()
+
+        return Response({
+            "success": True,
+            "message": "Data deleted successfully"
+        }, status=status.HTTP_200_OK)
+        
+        
+from .models import SalaryAttendanceReport
+from .serializers import SalaryAttendanceReportSerializer
+
+
+class SalaryAttendanceReportAPIView(APIView):
+
+    # =========================
+    # GET ALL / FILTER
+    # =========================
+    def get(self, request):
+
+        center_name = request.query_params.get("center_name")
+
+        queryset = SalaryAttendanceReport.objects.all()
+
+        if center_name:
+            queryset = queryset.filter(center_name=center_name)
+
+        serializer = SalaryAttendanceReportSerializer(
+            queryset,
+            many=True
+        )
+
+        return Response({
+            "success": True,
+            "count": queryset.count(),
+            "data": serializer.data
+        }, status=status.HTTP_200_OK)
+
+    # =========================
+    # POST
+    # =========================
+    def post(self, request):
+
+        serializer = SalaryAttendanceReportSerializer(
+            data=request.data
+        )
+
+        if serializer.is_valid():
+            serializer.save()
+
+            return Response({
+                "success": True,
+                "message": "Salary attendance report created successfully",
+                "data": serializer.data
+            }, status=status.HTTP_201_CREATED)
+
+        return Response({
+            "success": False,
+            "errors": serializer.errors
+        }, status=status.HTTP_400_BAD_REQUEST)
+
+
+class SalaryAttendanceReportDetailAPIView(APIView):
+
+    # =========================
+    # GET SINGLE
+    # =========================
+    def get(self, request, pk):
+
+        try:
+            obj = SalaryAttendanceReport.objects.get(pk=pk)
+        except SalaryAttendanceReport.DoesNotExist:
+            return Response({
+                "success": False,
+                "message": "Data not found"
+            }, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = SalaryAttendanceReportSerializer(obj)
+
+        return Response({
+            "success": True,
+            "data": serializer.data
+        }, status=status.HTTP_200_OK)
+
+    # =========================
+    # PUT
+    # =========================
+    def put(self, request, pk):
+
+        try:
+            obj = SalaryAttendanceReport.objects.get(pk=pk)
+        except SalaryAttendanceReport.DoesNotExist:
+            return Response({
+                "success": False,
+                "message": "Data not found"
+            }, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = SalaryAttendanceReportSerializer(
+            obj,
+            data=request.data
+        )
+
+        if serializer.is_valid():
+            serializer.save()
+
+            return Response({
+                "success": True,
+                "message": "Data updated successfully",
+                "data": serializer.data
+            }, status=status.HTTP_200_OK)
+
+        return Response({
+            "success": False,
+            "errors": serializer.errors
+        }, status=status.HTTP_400_BAD_REQUEST)
+
+    # =========================
+    # DELETE
+    # =========================
+    def delete(self, request, pk):
+
+        try:
+            obj = SalaryAttendanceReport.objects.get(pk=pk)
+        except SalaryAttendanceReport.DoesNotExist:
+            return Response({
+                "success": False,
+                "message": "Data not found"
+            }, status=status.HTTP_404_NOT_FOUND)
+
+        obj.delete()
+
+        return Response({
+            "success": True,
+            "message": "Data deleted successfully"
+        }, status=status.HTTP_200_OK)
+        
+
+from .models import MonthAttendanceReport
+from .serializers import MonthAttendanceReportSerializer
+class MonthAttendanceReportListAPIView(APIView):
+
+    def get(self, request):
+
+        center_name = request.query_params.get("center_name")
+
+        reports = MonthAttendanceReport.objects.all().order_by(
+            "-financial_year",
+            "-month"
+        )
+
+        if center_name:
+            reports = reports.filter(center_name=center_name)
+
+        serializer = MonthAttendanceReportSerializer(
+            reports,
+            many=True
+        )
+
+        return Response(
+            serializer.data,
+            status=status.HTTP_200_OK
+        )
+
+    def post(self, request):
+
+        serializer = MonthAttendanceReportSerializer(
+            data=request.data
+        )
+
+        if serializer.is_valid():
+            serializer.save()
+
+            return Response(
+                serializer.data,
+                status=status.HTTP_201_CREATED
+            )
+
+        return Response(
+            serializer.errors,
+            status=status.HTTP_400_BAD_REQUEST
+        )
+import os
+
+from django.http import JsonResponse, FileResponse
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status
+
+
+class MonthAttendanceReportDetailAPIView(APIView):
+
+    def get_object(self, pk):
+
+        try:
+            return MonthAttendanceReport.objects.get(pk=pk)
+        except MonthAttendanceReport.DoesNotExist:
+            return None
+
+    # GET EXCEL FILE
+    def get(self, request, pk):
+
+        report = self.get_object(pk)
+
+        if not report:
+            return JsonResponse(
+                {"error": "Month attendance report not found."},
+                status=404
+            )
+
+        if not report.month_attendance:
+            return JsonResponse(
+                {"error": "Excel file is not available for this report."},
+                status=404
+            )
+
+        file_path = report.month_attendance.path
+
+        if not os.path.exists(file_path):
+            return JsonResponse(
+                {
+                    "error": "Excel file does not exist on the server.",
+                    "path": file_path
+                },
+                status=404
+            )
+
+        response = FileResponse(
+            open(file_path, "rb"),
+            content_type=(
+                "application/vnd.openxmlformats-officedocument."
+                "spreadsheetml.sheet"
+            )
+        )
+
+        response["Content-Disposition"] = (
+            f'inline; filename="{os.path.basename(file_path)}"'
+        )
+
+        response["Access-Control-Allow-Origin"] = "http://localhost:3000"
+
+        return response
+
+    # PUT
+    def put(self, request, pk):
+
+        report = self.get_object(pk)
+
+        if not report:
+            return Response(
+                {"detail": "Month attendance report not found."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        serializer = MonthAttendanceReportSerializer(
+            report,
+            data=request.data
+        )
+
+        if serializer.is_valid():
+            serializer.save()
+
+            return Response(
+                serializer.data,
+                status=status.HTTP_200_OK
+            )
+
+        return Response(
+            serializer.errors,
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    # DELETE
+    def delete(self, request, pk):
+
+        report = self.get_object(pk)
+
+        if not report:
+            return Response(
+                {"detail": "Month attendance report not found."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        report.delete()
+
+        return Response(
+            {"message": "Month attendance report deleted successfully."},
+            status=status.HTTP_204_NO_CONTENT
+        )
