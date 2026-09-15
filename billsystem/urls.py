@@ -72,6 +72,7 @@ urlpatterns = [
     path("kishanbeej/bootstrap/",BootstrapAPIView.as_view(),name="kishan-beej-bootstrap",),
     path("kishanbeej/master/",MasterSettingAPIView.as_view(),name="kishan-beej-master",),
     path("centres/",CentreListAPIView.as_view(),name="kishan-beej-centres",),
+    path("kishanbeej/centres/",CentreListAPIView.as_view(),name="kishan-beej-centres",),
     path("kishanbeej/varieties/",VarietyListAPIView.as_view(),name="kishan-beej-varieties",), 
     path("kishanbeej/varieties/<int:pk>/",VarietyDetailAPIView.as_view(),name="kishan-beej-varieties",),
     path("kishanbeej/standards/",StandardListAPIView.as_view(),name="kishan-beej-standards",),
