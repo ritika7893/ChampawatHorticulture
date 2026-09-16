@@ -5,6 +5,13 @@ from .views import (
     SalaryAttendanceReportAPIView,MonthAttendanceReportListAPIView,MonthAttendanceReportDetailAPIView,
     SalaryAttendanceReportDetailAPIView
 )
+from .views import (
+    DragonApplicationAPIView,
+    DragonPersonalDetailsUpdateAPIView,
+    DragonPlanLandBankUpdateAPIView,
+    DragonApplicationDocumentsUpdateAPIView,
+)
+from .views import AllKisanApplicationsAPIView,KiwiApplicationAPIView, KiwiPersonalDetailsUpdateAPIView, KiwiPlanLandBankUpdateAPIView, KiwiApplicationDocumentsUpdateAPIView
 from .views import (BootstrapAPIView,
         MasterSettingAPIView,
     
@@ -102,4 +109,14 @@ urlpatterns = [
     path("salary-attendance-reports/<int:pk>/",SalaryAttendanceReportDetailAPIView.as_view(),name="salary-attendance-report-detail"),
     path("month-attendance-reports/",MonthAttendanceReportListAPIView.as_view(),name="month-attendance-reports"),
     path("month-attendance-reports/<int:pk>/",MonthAttendanceReportDetailAPIView.as_view(),name="month-attendance-report-detail"),
+    path("kiwi-application/", KiwiApplicationAPIView.as_view(), name="kiwi-application"),
+    path("kiwi-personal-details-update/", KiwiPersonalDetailsUpdateAPIView.as_view(), name="kiwi-personal-details-update"),
+    path("kiwi-plan-land-bank-update/", KiwiPlanLandBankUpdateAPIView.as_view(), name="kiwi-plan-land-bank-update"),
+    path("kiwi-application-documents-update/", KiwiApplicationDocumentsUpdateAPIView.as_view(), name="kiwi-application-documents-update"),
+    path("dragon-application/", DragonApplicationAPIView.as_view(), name="dragon-application"),
+    path("dragon-personal-details-update/", DragonPersonalDetailsUpdateAPIView.as_view(), name="dragon-personal-details-update"),
+    path("dragon-plan-land-bank-update/", DragonPlanLandBankUpdateAPIView.as_view(), name="dragon-plan-land-bank-update"),
+    path("dragon-application-documents-update/", DragonApplicationDocumentsUpdateAPIView.as_view(), name="dragon-application-documents-update"),
+    path("all-kisan-applications/",AllKisanApplicationsAPIView.as_view(),name="all-kisan-applications"),
 ]
+

@@ -1530,3 +1530,92 @@ class MonthAttendanceReportSerializer(serializers.ModelSerializer):
     class Meta:
         model = MonthAttendanceReport
         fields = "__all__"
+        
+        
+from .models import (
+    KiwiPersonalDetails,
+    KiwiPlanLandBankDetails,
+    KiwiApplicationDocuments,
+)
+
+
+class KiwiPersonalDetailsSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = KiwiPersonalDetails
+        fields = "__all__"
+
+        read_only_fields = [
+            "form_id",
+            "created_at",
+            "updated_at",
+        ]
+
+
+class KiwiPlanLandBankDetailsSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = KiwiPlanLandBankDetails
+        fields = "__all__"
+
+        read_only_fields = [
+            "form_id",
+            "created_at",
+            "updated_at",
+        ]
+
+
+class KiwiApplicationDocumentsSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = KiwiApplicationDocuments
+        fields = "__all__"
+
+        read_only_fields = [
+            "form_id",
+            "created_at",
+            "updated_at",
+        ]
+        
+from rest_framework import serializers
+
+from .models import (
+    DragonPersonalDetails,
+    DragonPlanLandBankDetails,
+    DragonApplicationDocuments,
+)
+
+
+class DragonPersonalDetailsSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = DragonPersonalDetails
+        fields = "__all__"
+        read_only_fields = [
+            "form_id",
+            "created_at",
+            "updated_at",
+        ]
+
+
+
+class DragonPlanLandBankDetailsSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = DragonPlanLandBankDetails
+        fields = "__all__"
+        read_only_fields = [
+            "form_id",
+            "created_at",
+            "updated_at",
+        ]
+
+
+
+class DragonApplicationDocumentsSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = DragonApplicationDocuments
+        fields = "__all__"
+        read_only_fields = [
+            "form_id",
+            "created_at",
+            "updated_at",
+        ]

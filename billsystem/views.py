@@ -3824,3 +3824,805 @@ class MonthAttendanceReportDetailAPIView(APIView):
             {"message": "Month attendance report deleted successfully."},
             status=status.HTTP_204_NO_CONTENT
         )
+        
+from .models import (
+    KiwiPersonalDetails,
+    KiwiPlanLandBankDetails,
+    KiwiApplicationDocuments,
+)
+
+from .serializers import (
+    KiwiPersonalDetailsSerializer,
+    KiwiPlanLandBankDetailsSerializer,
+    KiwiApplicationDocumentsSerializer,
+)
+
+
+class KiwiApplicationAPIView(APIView):
+
+    @transaction.atomic
+    def post(self, request):
+
+        serializer = KiwiPersonalDetailsSerializer(
+            data=request.data
+        )
+
+        if not serializer.is_valid():
+
+            return Response(
+                {
+                    "success": False,
+                    "errors": serializer.errors
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        personal = serializer.save()
+
+        form_id = personal.form_id
+
+        plan = KiwiPlanLandBankDetails.objects.get(
+            form_id=form_id
+        )
+
+        application = KiwiApplicationDocuments.objects.get(
+            form_id=form_id
+        )
+
+        return Response(
+            {
+                "success": True,
+                "message": "Kiwi application created successfully.",
+                "form_id": form_id,
+                "data": {
+                    "personal": KiwiPersonalDetailsSerializer(
+                        personal
+                    ).data,
+
+                    "plan_land_bank": KiwiPlanLandBankDetailsSerializer(
+                        plan
+                    ).data,
+
+                    "application_documents": KiwiApplicationDocumentsSerializer(
+                        application
+                    ).data
+                }
+            },
+            status=status.HTTP_201_CREATED
+        )
+
+    def get(self, request):
+
+        form_id = request.query_params.get("form_id")
+
+        # ====================================================
+        # GET SINGLE APPLICATION
+        # ====================================================
+
+        if form_id:
+
+            try:
+
+                personal = KiwiPersonalDetails.objects.get(
+                    form_id=form_id
+                )
+
+                plan = KiwiPlanLandBankDetails.objects.get(
+                    form_id=form_id
+                )
+
+                application = KiwiApplicationDocuments.objects.get(
+                    form_id=form_id
+                )
+
+            except (
+                KiwiPersonalDetails.DoesNotExist,
+                KiwiPlanLandBankDetails.DoesNotExist,
+                KiwiApplicationDocuments.DoesNotExist
+            ):
+
+                return Response(
+                    {
+                        "success": False,
+                        "message": "Application not found."
+                    },
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            return Response(
+                {
+                    "success": True,
+                    "form_id": form_id,
+                    "data": {
+                        "personal": KiwiPersonalDetailsSerializer(
+                            personal
+                        ).data,
+
+                        "plan_land_bank": KiwiPlanLandBankDetailsSerializer(
+                            plan
+                        ).data,
+
+                        "application_documents": KiwiApplicationDocumentsSerializer(
+                            application
+                        ).data
+                    }
+                },
+                status=status.HTTP_200_OK
+            )
+
+        # ====================================================
+        # GET ALL APPLICATIONS
+        # ====================================================
+
+        personal_records = (
+            KiwiPersonalDetails.objects
+            .all()
+            .order_by("-id")
+        )
+
+        result = []
+
+        for personal in personal_records:
+
+            form_id = personal.form_id
+
+            plan = (
+                KiwiPlanLandBankDetails.objects
+                .filter(form_id=form_id)
+                .first()
+            )
+
+            application = (
+                KiwiApplicationDocuments.objects
+                .filter(form_id=form_id)
+                .first()
+            )
+
+            result.append(
+                {
+                    "form_id": form_id,
+
+                    "personal": KiwiPersonalDetailsSerializer(
+                        personal
+                    ).data,
+
+                    "plan_land_bank": (
+                        KiwiPlanLandBankDetailsSerializer(
+                            plan
+                        ).data
+                        if plan else None
+                    ),
+
+                    "application_documents": (
+                        KiwiApplicationDocumentsSerializer(
+                            application
+                        ).data
+                        if application else None
+                    )
+                }
+            )
+
+        return Response(
+            {
+                "success": True,
+                "count": len(result),
+                "data": result
+            },
+            status=status.HTTP_200_OK
+        )
+        
+class KiwiPersonalDetailsUpdateAPIView(APIView):
+
+    @transaction.atomic
+    def put(self, request):
+
+        form_id = request.data.get("form_id")
+
+        if not form_id:
+
+            return Response(
+                {
+                    "success": False,
+                    "message": "form_id is required."
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+
+            instance = KiwiPersonalDetails.objects.get(
+                form_id=form_id
+            )
+
+        except KiwiPersonalDetails.DoesNotExist:
+
+            return Response(
+                {
+                    "success": False,
+                    "message": "Personal details not found."
+                },
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        serializer = KiwiPersonalDetailsSerializer(
+            instance,
+            data=request.data,
+            partial=True
+        )
+
+        if not serializer.is_valid():
+
+            return Response(
+                {
+                    "success": False,
+                    "errors": serializer.errors
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        serializer.save()
+
+        return Response(
+            {
+                "success": True,
+                "message": "Personal details updated successfully.",
+                "data": serializer.data
+            },
+            status=status.HTTP_200_OK
+        )
+        
+class KiwiPlanLandBankUpdateAPIView(APIView):
+
+    @transaction.atomic
+    def put(self, request):
+
+        form_id = request.data.get("form_id")
+
+        if not form_id:
+
+            return Response(
+                {
+                    "success": False,
+                    "message": "form_id is required."
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+
+            instance = KiwiPlanLandBankDetails.objects.get(
+                form_id=form_id
+            )
+
+        except KiwiPlanLandBankDetails.DoesNotExist:
+
+            return Response(
+                {
+                    "success": False,
+                    "message": "Plan, land and bank details not found."
+                },
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        serializer = KiwiPlanLandBankDetailsSerializer(
+            instance,
+            data=request.data,
+            partial=True
+        )
+
+        if not serializer.is_valid():
+
+            return Response(
+                {
+                    "success": False,
+                    "errors": serializer.errors
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        serializer.save()
+
+        return Response(
+            {
+                "success": True,
+                "message": "Plan, land and bank details updated successfully.",
+                "data": serializer.data
+            },
+            status=status.HTTP_200_OK
+        )
+        
+class KiwiApplicationDocumentsUpdateAPIView(APIView):
+
+    @transaction.atomic
+    def put(self, request):
+
+        form_id = request.data.get("form_id")
+
+        if not form_id:
+
+            return Response(
+                {
+                    "success": False,
+                    "message": "form_id is required."
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+
+            instance = KiwiApplicationDocuments.objects.get(
+                form_id=form_id
+            )
+
+        except KiwiApplicationDocuments.DoesNotExist:
+
+            return Response(
+                {
+                    "success": False,
+                    "message": "Application documents not found."
+                },
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        serializer = KiwiApplicationDocumentsSerializer(
+            instance,
+            data=request.data,
+            partial=True
+        )
+
+        if not serializer.is_valid():
+
+            return Response(
+                {
+                    "success": False,
+                    "errors": serializer.errors
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        serializer.save()
+
+        return Response(
+            {
+                "success": True,
+                "message": "Application and documents updated successfully.",
+                "data": serializer.data
+            },
+            status=status.HTTP_200_OK
+        )
+
+
+from .models import (
+    DragonPersonalDetails,
+    DragonPlanLandBankDetails,
+    DragonApplicationDocuments,
+)
+
+from .serializers import (
+    DragonPersonalDetailsSerializer,
+    DragonPlanLandBankDetailsSerializer,
+    DragonApplicationDocumentsSerializer,
+)
+
+
+class DragonApplicationAPIView(APIView):
+
+    @transaction.atomic
+    def post(self, request):
+
+        serializer = DragonPersonalDetailsSerializer(
+            data=request.data
+        )
+
+        if not serializer.is_valid():
+
+            return Response(
+                {
+                    "success": False,
+                    "errors": serializer.errors
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        personal = serializer.save()
+
+        form_id = personal.form_id
+
+        plan = DragonPlanLandBankDetails.objects.get(
+            form_id=form_id
+        )
+
+        application = DragonApplicationDocuments.objects.get(
+            form_id=form_id
+        )
+
+        return Response(
+            {
+                "success": True,
+                "message": "Dragon application created successfully.",
+                "form_id": form_id,
+                "data": {
+                    "personal": DragonPersonalDetailsSerializer(
+                        personal
+                    ).data,
+
+                    "plan_land_bank": DragonPlanLandBankDetailsSerializer(
+                        plan
+                    ).data,
+
+                    "application_documents": DragonApplicationDocumentsSerializer(
+                        application
+                    ).data
+                }
+            },
+            status=status.HTTP_201_CREATED
+        )
+
+    def get(self, request):
+
+        form_id = request.query_params.get("form_id")
+
+        # ====================================================
+        # GET SINGLE APPLICATION
+        # ====================================================
+
+        if form_id:
+
+            try:
+
+                personal = DragonPersonalDetails.objects.get(
+                    form_id=form_id
+                )
+
+                plan = DragonPlanLandBankDetails.objects.get(
+                    form_id=form_id
+                )
+
+                application = DragonApplicationDocuments.objects.get(
+                    form_id=form_id
+                )
+
+            except (
+                DragonPersonalDetails.DoesNotExist,
+                DragonPlanLandBankDetails.DoesNotExist,
+                DragonApplicationDocuments.DoesNotExist
+            ):
+
+                return Response(
+                    {
+                        "success": False,
+                        "message": "Application not found."
+                    },
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            return Response(
+                {
+                    "success": True,
+                    "form_id": form_id,
+                    "data": {
+                        "personal": DragonPersonalDetailsSerializer(
+                            personal
+                        ).data,
+
+                        "plan_land_bank": DragonPlanLandBankDetailsSerializer(
+                            plan
+                        ).data,
+
+                        "application_documents": DragonApplicationDocumentsSerializer(
+                            application
+                        ).data
+                    }
+                },
+                status=status.HTTP_200_OK
+            )
+
+        # ====================================================
+        # GET ALL APPLICATIONS
+        # ====================================================
+
+        personal_records = (
+            DragonPersonalDetails.objects
+            .all()
+            .order_by("-id")
+        )
+
+        result = []
+
+        for personal in personal_records:
+
+            form_id = personal.form_id
+
+            plan = (
+                DragonPlanLandBankDetails.objects
+                .filter(form_id=form_id)
+                .first()
+            )
+
+            application = (
+                DragonApplicationDocuments.objects
+                .filter(form_id=form_id)
+                .first()
+            )
+
+            result.append(
+                {
+                    "form_id": form_id,
+
+                    "personal": DragonPersonalDetailsSerializer(
+                        personal
+                    ).data,
+
+                    "plan_land_bank": (
+                        DragonPlanLandBankDetailsSerializer(
+                            plan
+                        ).data
+                        if plan else None
+                    ),
+
+                    "application_documents": (
+                        DragonApplicationDocumentsSerializer(
+                            application
+                        ).data
+                        if application else None
+                    )
+                }
+            )
+
+        return Response(
+            {
+                "success": True,
+                "count": len(result),
+                "data": result
+            },
+            status=status.HTTP_200_OK
+        )
+
+
+class DragonPersonalDetailsUpdateAPIView(APIView):
+
+    @transaction.atomic
+    def put(self, request):
+
+        form_id = request.data.get("form_id")
+
+        if not form_id:
+
+            return Response(
+                {
+                    "success": False,
+                    "message": "form_id is required."
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+
+            instance = DragonPersonalDetails.objects.get(
+                form_id=form_id
+            )
+
+        except DragonPersonalDetails.DoesNotExist:
+
+            return Response(
+                {
+                    "success": False,
+                    "message": "Personal details not found."
+                },
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        serializer = DragonPersonalDetailsSerializer(
+            instance,
+            data=request.data,
+            partial=True
+        )
+
+        if not serializer.is_valid():
+
+            return Response(
+                {
+                    "success": False,
+                    "errors": serializer.errors
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        serializer.save()
+
+        return Response(
+            {
+                "success": True,
+                "message": "Personal details updated successfully.",
+                "data": serializer.data
+            },
+            status=status.HTTP_200_OK
+        )
+
+
+class DragonPlanLandBankUpdateAPIView(APIView):
+
+    @transaction.atomic
+    def put(self, request):
+
+        form_id = request.data.get("form_id")
+
+        if not form_id:
+
+            return Response(
+                {
+                    "success": False,
+                    "message": "form_id is required."
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+
+            instance = DragonPlanLandBankDetails.objects.get(
+                form_id=form_id
+            )
+
+        except DragonPlanLandBankDetails.DoesNotExist:
+
+            return Response(
+                {
+                    "success": False,
+                    "message": "Plan, land and bank details not found."
+                },
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        serializer = DragonPlanLandBankDetailsSerializer(
+            instance,
+            data=request.data,
+            partial=True
+        )
+
+        if not serializer.is_valid():
+
+            return Response(
+                {
+                    "success": False,
+                    "errors": serializer.errors
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        serializer.save()
+
+        return Response(
+            {
+                "success": True,
+                "message": "Plan, land and bank details updated successfully.",
+                "data": serializer.data
+            },
+            status=status.HTTP_200_OK
+        )
+
+
+class DragonApplicationDocumentsUpdateAPIView(APIView):
+
+    @transaction.atomic
+    def put(self, request):
+
+        form_id = request.data.get("form_id")
+
+        if not form_id:
+
+            return Response(
+                {
+                    "success": False,
+                    "message": "form_id is required."
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+
+            instance = DragonApplicationDocuments.objects.get(
+                form_id=form_id
+            )
+
+        except DragonApplicationDocuments.DoesNotExist:
+
+            return Response(
+                {
+                    "success": False,
+                    "message": "Application documents not found."
+                },
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        serializer = DragonApplicationDocumentsSerializer(
+            instance,
+            data=request.data,
+            partial=True
+        )
+
+        if not serializer.is_valid():
+
+            return Response(
+                {
+                    "success": False,
+                    "errors": serializer.errors
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        serializer.save()
+
+        return Response(
+            {
+                "success": True,
+                "message": "Application and documents updated successfully.",
+                "data": serializer.data
+            },
+            status=status.HTTP_200_OK
+        )
+        
+class AllKisanApplicationsAPIView(APIView):
+
+    def get(self, request):
+
+        data = {
+            "kisan": {
+                "personal_land": KisanPersonalLandDetailsSerializer(
+                    KisanPersonalLandDetails.objects.all(),
+                    many=True
+                ).data,
+
+                "plan_technical_bank": KisanPlanTechnicalBankDetailsSerializer(
+                    KisanPlanTechnicalBankDetails.objects.all(),
+                    many=True
+                ).data,
+
+                "documents": KisanApplicationDocumentsSerializer(
+                    KisanApplicationDocuments.objects.all(),
+                    many=True
+                ).data,
+            },
+
+            "kiwi": {
+                "personal": KiwiPersonalDetailsSerializer(
+                    KiwiPersonalDetails.objects.all(),
+                    many=True
+                ).data,
+
+                "plan_land_bank": KiwiPlanLandBankDetailsSerializer(
+                    KiwiPlanLandBankDetails.objects.all(),
+                    many=True
+                ).data,
+
+                "documents": KiwiApplicationDocumentsSerializer(
+                    KiwiApplicationDocuments.objects.all(),
+                    many=True
+                ).data,
+            },
+
+            "dragon": {
+                "personal": DragonPersonalDetailsSerializer(
+                    DragonPersonalDetails.objects.all(),
+                    many=True
+                ).data,
+
+                "plan_land_bank": DragonPlanLandBankDetailsSerializer(
+                    DragonPlanLandBankDetails.objects.all(),
+                    many=True
+                ).data,
+
+                "documents": DragonApplicationDocumentsSerializer(
+                    DragonApplicationDocuments.objects.all(),
+                    many=True
+                ).data,
+            },
+        }
+
+        return Response(
+            {
+                "status": True,
+                "message": "All application data fetched successfully.",
+                "data": data
+            },
+            status=status.HTTP_200_OK
+        )

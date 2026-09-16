@@ -1587,3 +1587,219 @@ class MonthAttendanceReport(models.Model):
 
     def __str__(self):
         return f"{self.center_name} - {self.financial_year} - Month {self.month}"
+        
+        
+class KiwiPersonalDetails(models.Model):
+    form_id = models.CharField(max_length=30, unique=True)
+
+    name = models.CharField(max_length=150)
+    gender = models.CharField(max_length=20)
+    father = models.CharField(max_length=150)
+    udyan_card = models.CharField(max_length=100, blank=True, null=True)
+
+    village = models.CharField(max_length=150)
+    post = models.CharField(max_length=150, blank=True, null=True)
+    block = models.CharField(max_length=150)
+    district = models.CharField(max_length=150)
+
+    mobile = models.CharField(max_length=15)
+    aadhaar = models.CharField(max_length=20)
+    category = models.CharField(max_length=50)
+
+    photo = models.TextField(blank=True, null=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    def save(self, *args, **kwargs):
+
+        is_new = self.pk is None
+
+        if is_new and not self.form_id:
+
+            last_record = (
+                KiwiPersonalDetails.objects
+                .filter(form_id__startswith="FORM-")
+                .order_by("-id")
+                .first()
+            )
+
+            if last_record:
+                try:
+                    last_number = int(
+                        last_record.form_id.split("-")[1]
+                    )
+                except (ValueError, IndexError):
+                    last_number = 0
+            else:
+                last_number = 0
+
+            self.form_id = f"FORM-{last_number + 1:06d}"
+
+        with transaction.atomic():
+
+            super().save(*args, **kwargs)
+
+            if is_new:
+
+                KiwiPlanLandBankDetails.objects.get_or_create(
+                    form_id=self.form_id
+                )
+
+                KiwiApplicationDocuments.objects.get_or_create(
+                    form_id=self.form_id
+                )
+
+
+    class Meta:
+        db_table = "kiwi_personal_details"
+
+    def __str__(self):
+        return self.form_id
+        
+        
+class KiwiPlanLandBankDetails(models.Model):
+    form_id = models.CharField(max_length=30, unique=True)
+    total_land = models.DecimalField(max_digits=12, decimal_places=4, null=True, blank=True)
+    proposed_area = models.DecimalField(max_digits=12, decimal_places=4, null=True, blank=True)
+    latitude = models.DecimalField(max_digits=12, decimal_places=8, null=True, blank=True)
+    longitude = models.DecimalField(max_digits=12, decimal_places=8, null=True, blank=True)
+    irrigation = models.CharField(max_length=20, blank=True, null=True)
+    irr_source = models.JSONField(default=list, blank=True)
+    irr_other = models.CharField(max_length=200, blank=True, null=True)
+    altitude = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    road_dist = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    slope = models.CharField(max_length=50, blank=True, null=True)
+    soil = models.CharField(max_length=100, blank=True, null=True)
+    plan_scheme = models.CharField(max_length=100, blank=True, null=True)
+    cost_per_ha = models.CharField(max_length=50, blank=True, null=True)
+    plan_type = models.CharField(max_length=30, blank=True, null=True)
+    group_name = models.CharField(max_length=150, blank=True, null=True)
+    contribution = models.CharField(max_length=100, blank=True, null=True)
+    other_scheme = models.CharField(max_length=200, blank=True, null=True)
+    bank_name = models.CharField(max_length=150, blank=True, null=True)
+    branch = models.CharField(max_length=150, blank=True, null=True)
+    account = models.CharField(max_length=30, blank=True, null=True)
+    ifsc = models.CharField(max_length=20, blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "kiwi_plan_land_bank_details"
+
+    def __str__(self):
+        return self.form_id
+        
+class KiwiApplicationDocuments(models.Model):
+    form_id = models.CharField(max_length=30, unique=True)
+    execution = models.CharField(max_length=100, blank=True, null=True)
+    firm_name = models.CharField(max_length=200, blank=True, null=True)
+    technical_standard_accepted = models.BooleanField(default=False)
+    place = models.CharField(max_length=150, blank=True, null=True)
+    application_date = models.DateField(null=True, blank=True)
+    documents = models.JSONField(default=list, blank=True)
+    declaration_accepted = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "kiwi_application_documents"
+
+    def __str__(self):
+        return self.form_id
+        
+from django.db import models, transaction
+
+
+class DragonPersonalDetails(models.Model):
+    form_id = models.CharField(max_length=30, unique=True)
+    name = models.CharField(max_length=150)
+    gender = models.CharField(max_length=20)
+    father = models.CharField(max_length=150)
+    udyan_card = models.CharField(max_length=100, blank=True, null=True)
+    village = models.CharField(max_length=150)
+    post = models.CharField(max_length=150, blank=True, null=True)
+    block = models.CharField(max_length=150)
+    district = models.CharField(max_length=150)
+    mobile = models.CharField(max_length=15)
+    aadhaar = models.CharField(max_length=20)
+    category = models.CharField(max_length=50)
+    photo = models.TextField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def save(self, *args, **kwargs):
+        is_new = self.pk is None
+        if is_new and not self.form_id:
+            last_record = DragonPersonalDetails.objects.filter(form_id__startswith="FORM-").order_by("-id").first()
+            if last_record:
+                try:
+                    last_number = int(last_record.form_id.split("-")[1])
+                except (ValueError, IndexError):
+                    last_number = 0
+            else:
+                last_number = 0
+            self.form_id = f"FORM-{last_number + 1:06d}"
+
+        with transaction.atomic():
+            super().save(*args, **kwargs)
+            if is_new:
+                DragonPlanLandBankDetails.objects.get_or_create(form_id=self.form_id)
+                DragonApplicationDocuments.objects.get_or_create(form_id=self.form_id)
+
+    class Meta:
+        db_table = "dragon_personal_details"
+
+    def __str__(self):
+        return self.form_id
+
+
+class DragonPlanLandBankDetails(models.Model):
+    form_id = models.CharField(max_length=30, unique=True)
+    total_land = models.DecimalField(max_digits=12, decimal_places=4, null=True, blank=True)
+    proposed_area = models.DecimalField(max_digits=12, decimal_places=4, null=True, blank=True)
+    latitude = models.DecimalField(max_digits=12, decimal_places=8, null=True, blank=True)
+    longitude = models.DecimalField(max_digits=12, decimal_places=8, null=True, blank=True)
+    irrigation = models.CharField(max_length=20, blank=True, null=True)
+    irr_source = models.JSONField(default=list, blank=True)
+    irr_other = models.CharField(max_length=200, blank=True, null=True)
+    altitude = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    road_dist = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    slope = models.CharField(max_length=50, blank=True, null=True)
+    soil = models.CharField(max_length=100, blank=True, null=True)
+    plan_scheme = models.CharField(max_length=100, blank=True, null=True)
+    cost_per_ha = models.CharField(max_length=50, blank=True, null=True)
+    plan_type = models.CharField(max_length=30, blank=True, null=True)
+    group_name = models.CharField(max_length=150, blank=True, null=True)
+    contribution = models.CharField(max_length=100, blank=True, null=True)
+    other_scheme = models.CharField(max_length=200, blank=True, null=True)
+    bank_name = models.CharField(max_length=150, blank=True, null=True)
+    branch = models.CharField(max_length=150, blank=True, null=True)
+    account = models.CharField(max_length=30, blank=True, null=True)
+    ifsc = models.CharField(max_length=20, blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "dragon_plan_land_bank_details"
+
+    def __str__(self):
+        return self.form_id
+
+
+class DragonApplicationDocuments(models.Model):
+    form_id = models.CharField(max_length=30, unique=True)
+    execution = models.CharField(max_length=100, blank=True, null=True)
+    firm_name = models.CharField(max_length=200, blank=True, null=True)
+    technical_standard_accepted = models.BooleanField(default=False)
+    place = models.CharField(max_length=150, blank=True, null=True)
+    application_date = models.DateField(null=True, blank=True)
+    documents = models.JSONField(default=list, blank=True)
+    declaration_accepted = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "dragon_application_documents"
+
+    def __str__(self):
+        return self.form_id
